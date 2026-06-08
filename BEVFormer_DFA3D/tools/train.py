@@ -13,6 +13,14 @@ import os
 import time
 import torch
 import warnings
+
+# Many dataloader workers + DDP can exhaust /dev/shm file descriptors and trigger
+# a SIGKILL (-9) host/cgroup OOM. 'file_system' sharing avoids the fd blow-up.
+import torch.multiprocessing as _mp
+try:
+    _mp.set_sharing_strategy('file_system')
+except RuntimeError:
+    pass
 from mmcv import Config, DictAction
 from mmcv.runner import get_dist_info, init_dist
 from os import path as osp
@@ -79,7 +87,8 @@ def parse_args():
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
         help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)
+    # Accept both spellings: torch>=2 torch.distributed.launch passes --local-rank.
+    parser.add_argument('--local-rank', '--local_rank', type=int, default=0)
     parser.add_argument(
         '--autoscale-lr',
         action='store_true',

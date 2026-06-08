@@ -158,7 +158,7 @@ def get_extensions():
     extra_compile_args = {'cxx': []}
 
     if platform.system() != 'Windows':
-        extra_compile_args['cxx'] = ['-std=c++14']
+        extra_compile_args['cxx'] = ['-std=c++17']
 
     include_dirs = []
     
@@ -182,7 +182,7 @@ def get_extensions():
     include_dirs.append(os.path.abspath('./dfa3D/ops/csrc/common/cuda'))
    
     if 'nvcc' in extra_compile_args and platform.system() != 'Windows':
-        extra_compile_args['nvcc'] += ['-std=c++14']
+        extra_compile_args['nvcc'] += ['-std=c++17']
 
     ext_ops = extension(
         name=ext_name,

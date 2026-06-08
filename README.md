@@ -1,153 +1,114 @@
-3D Deformable Attention (DFA3D)
+DFA3D-CARLA
 ========
-By [Hongyang Li*](https://scholar.google.com.hk/citations?view_op=list_works&hl=zh-CN&user=zdgHNmkAAAAJ&gmla=AMpAcmTJNHoetv6zgfzZkIRcYsFr0UkGGDyl5tAp5etuBqhz3lzYZCQrVDot02xVQ1XTbnMS1fPdAfe0-2--aTXOtewokjyShNLOQQyyhtkolwaz0hvENZpi-pJ-Wg), [Hao Zhang*](https://scholar.google.com/citations?user=B8hPxMQAAAAJ&hl=zh-CN), [Zhaoyang Zeng](https://scholar.google.com.hk/citations?user=U_cvvUwAAAAJ&hl=zh-CN&oi=sra), [Shilong Liu](https://scholar.google.com/citations?hl=zh-CN&user=nkSVY3MAAAAJ), [Feng Li](https://scholar.google.com.hk/citations?user=ybRe9GcAAAAJ&hl=zh-CN&oi=sra), [Tianhe Ren](https://scholar.google.com.hk/citations?user=cW4ILs0AAAAJ&hl=zh-CN&oi=sra), and [Lei Zhang](https://scholar.google.com/citations?hl=zh-CN&user=fIlGZToAAAAJ) <sup>:email:</sup>.
 
-[[`Paper`](https://arxiv.org/abs/2307.12972)] [[`BibTex`](#black_nib-citation)]
+**DFA3D-enabled BEVFormer adapted to the CARLA / GeoBEV camera-geometry robustness benchmark.**
 
-This repository is the official implementation of the paper "DFA3D: 3D Deformable Attention For 2D-to-3D Feature Lifting".
+This is a research fork of [DFA3D (3D Deformable Attention, ICCV 2023)](https://github.com/IDEA-Research/3D-deformable-attention).
+It ports the DFA3D-enabled BEVFormer to a CARLA-rendered nuScenes-format dataset so that
+**BEVFormer (extrinsic-gated sampling, no depth)** and **BEVFormer + DFA3D (extrinsic-gated
+sampling, *with* depth-aware 3D feature lifting)** can be compared as a clean single-variable
+study. In the GeoBEV benchmark this is the 7th detector and fills the otherwise-empty
+*gates-sampling × uses-depth* quadrant of the architecture matrix.
 
-# :fire: News
-[2023/7/15] Our paper is accepted by ICCV2023.
+> **Attribution / License.** This repository is derived from
+> [`https://github.com/IDEA-Research/3D-deformable-attention`](https://github.com/IDEA-Research/3D-deformable-attention),
+> which is licensed under the **IDEA License 1.0, Copyright (c) IDEA. All Rights Reserved.**
+> The same license applies to this fork (see [`LICENSE`](LICENSE)); use is limited to
+> non-commercial research. The DFA3D CUDA operator and the `BEVFormer_DFA3D` model code are
+> the original authors' work. BEVFormer is © its authors
+> ([fundamentalvision/BEVFormer](https://github.com/fundamentalvision/BEVFormer)). The original
+> project README is preserved at [`README_DFA3D.md`](README_DFA3D.md), and the upstream paper
+> should be cited (see [Citation](#citation)).
 
-[2023/8/24] We opensource our 3D Deformable Attention (DFA3D) and also DFA3D-enabled BEVFormer.
+---
 
+## What this fork adds
 
-# :scroll: Abstract
-In this paper, we propose a new operator, called 3D DeFormable Attention (DFA3D), for 2D-to-3D feature lifting, which transforms multi-view 2D image features into a unified 3D space for 3D object detection. 
-Existing feature lifting approaches, such as Lift-Splat-based and 2D attention-based, either use estimated depth to get pseudo LiDAR features and then splat them to a 3D space, which is a one-pass operation without feature refinement, or ignore depth and lift features by 2D attention mechanisms, which achieve finer semantics while suffering from a depth ambiguity problem. 
-In contrast, our DFA3D-based method first leverages the estimated depth to expand each view's 2D feature map to 3D and then utilizes DFA3D to aggregate features from the expanded 3D feature maps. With the help of DFA3D, the depth ambiguity problem can be effectively alleviated from the root, and the lifted features can be progressively refined layer by layer, thanks to the Transformer-like architecture. In addition, we propose a mathematically equivalent implementation of DFA3D which can significantly improve its memory efficiency and computational speed. We integrate DFA3D into several methods that use 2D attention-based feature lifting with only a few modifications in code and evaluate on the nuScenes dataset. The experiment results show a consistent improvement of +1.41 mAP on average, and up to +15.1 mAP improvement when high-quality depth information is available, demonstrating the superiority, applicability, and huge potential of DFA3D.
+All changes live in `BEVFormer_DFA3D/`; the upstream `DFA3D/` CUDA operator is unchanged except
+for a one-line C++ standard bump needed by newer PyTorch (see Installation).
 
-# :hammer_and_wrench: Method
-## Comparison of feature lifting methods.
-<img src="figures/Comparisons.png">
+| Area | File | Change |
+|---|---|---|
+| Config | `projects/configs/bevformer/bevformer_DFA3D_carla.py` | CARLA single-variable config: R50 (ImageNet), BEV 50×50, single-frame, 6 CARLA classes, no aug/EMA/CBGS, fp32, single FPN level. DFA3D depth head (`DepthHead_MLVGDpt`) + `SpatialCrossAttention_DFA3D` grafted at FPN level 0. |
+| Dataset | `projects/mmdet3d_plugin/datasets/carla_nuscenes_dataset.py` | `CarlaNuScenesDataset` — runs the nuScenes-devkit detection metrics on the CARLA eval DB without modifying the devkit (custom version string + scene-name + visibility-based GT validity). Subclasses the depth-aware `CustomNuScenesDataset` so the depth map is carried through the temporal queue. |
+| Depth GT | `projects/mmdet3d_plugin/datasets/pipelines/loading.py::CarlaDPTMultiViewDepthDFA3D` | Loads CARLA dense **DPT** depth (RGB→DPT path, decode `(R + G·256 + B·256²)/(256³−1)·1000` planar-Z meters) into `results['dpt']`, aligned to the multi-view images. |
+| Pipeline | `projects/mmdet3d_plugin/datasets/pipelines/transform_3d.py::RandomScaleImageMultiViewImageDpt` | Used so the depth map is scaled (nearest) together with its image; `PadMultiViewImage` then pads both — keeping pixel-for-pixel depth↔image alignment into the depth head. |
+| Launcher | `tools/train_DFA3D_carla.sh` | Single-GPU launch matching the BEVFormer baseline's global batch and LR. |
 
+### Fair-comparison protocol
 
-## Improvements.
-Our DFA3D brings consistent improvement on several methods, including two concurrent works ([DA-BEV](https://arxiv.org/abs/2302.13002)  and [Sparse4D](https://arxiv.org/abs/2211.10581)).
+To keep the comparison to the no-depth BEVFormer baseline a true single-variable one (the only
+addition is DFA3D's depth-aware lifting), this config matches the baseline exactly: same backbone,
+BEV grid, single-frame setup, classes, augmentation policy, optimizer, schedule, and **global batch
+16 at lr 4e-4** (here `samples_per_gpu=16` on one GPU; with frozen backbone BN this is equivalent
+to the baseline's 2-GPU × bs8).
 
-<img src="figures/Main_results.png" width="400px">
+### Verified
 
-Improving the quality of depth will bring further gains (up to 15.1% mAP).
+Build, a forward+backward training step (detection losses **and** the depth loss), and inference
+all run on the CARLA data. Coordinate system checked: GT-box projection rate via `lidar2img` = 1.000
+(matches the BEVFormer baseline), and the loaded DPT depth is in the same metric units and
+pixel-aligned to the scaled/padded image (median DPT-surface / box-center-Z ≈ 0.99).
 
-<img src="figures/Depth.png" width="400px">
+---
 
-## How to transform your 2D Attention-based feature lifting into our 3D Deformable Attention-based one.
-Here, we take 2D Deformable Attention as an example, only a few modifications in code are required. For more details, please refer to our examples provided in Model Zoo. 
+## Installation (B200 / CUDA 12.8 notes)
 
-For more details, please refer to our provided DFA3D-enabled BEVFormer.
-<img src="figures/Modifications.png">
+Upstream targets `pytorch=1.9.1, cuda=11.1`. This fork was run on an NVIDIA B200
+(`torch 2.x, cuda 12.8, sm_100`). Two adjustments:
 
-# :rocket: Model Zoo
-We denote 2D Deformable Attention and our 3D Deformable Attention as DFA2D and DFA3D respectively.
-<table>
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th>Method</th>
-      <th>Feature Lifting</th>
-      <th>mAP&nbsp/&nbspNDS</th>
-      <th>Config</th>
-      <th>Checkpoint</th>
-    </tr>
-  </thead>
-  
-  <tbody>
-    <tr>
-      <th rowspan="2">0</th>
-      <td rowspan="2">BEVFormer-base</td>
-      <td>DFA2D-based</td>
-      <td>41.6&nbsp/&nbsp51.7</td>
-      <td><a href="https://github.com/fundamentalvision/BEVFormer/tree/master#model-zoo">config</a></td>
-      <td><a href="https://github.com/fundamentalvision/BEVFormer/tree/master#model-zoo">model</a></td>
-    </tr>
-    <tr>
-      <td>DFA3D-based</td>
-      <td>43.2&nbsp/&nbsp53.2 <br>+1.6&nbsp/&nbsp+1.5</td>
-      <td><a href="https://github.com/IDEA-Research/3D-deformable-attention/blob/main/BEVFormer_DFA3D/projects/configs/bevformer/bevformer_base_DFA3D.py">config</a></td>
-      <td><a href="https://drive.google.com/file/d/1hWeNBnBYNkO1UDQTbR8zuozMRCFPx1h-/view?usp=sharing">model</a></td>
-    </tr>
-    <tr>
-      <th rowspan="2">1</th>
-      <td rowspan="2">BEVFormer-small</td>
-      <td>DFA2D-based</td>
-      <td>37.0&nbsp/&nbsp47.9</td>
-      <td><a href="https://github.com/fundamentalvision/BEVFormer/tree/master#model-zoo">config</a></td>
-      <td><a href="https://github.com/fundamentalvision/BEVFormer/tree/master#model-zoo">model</a></td>
-    </tr>
-    <tr>
-      <td>DFA3D-based</td>
-      <td>40.3&nbsp/&nbsp50.9<br>+3.3&nbsp/&nbsp+3.0</td>
-      <td><a href="https://github.com/IDEA-Research/3D-deformable-attention/blob/main/BEVFormer_DFA3D/projects/configs/bevformer/bevformer_small_DFA3D.py">config</a></td>
-      <td><a href="https://drive.google.com/file/d/1wGFMSDDAU5cZ02KxYWIs_47xRel1694A/view?usp=sharing">model</a></td>
-    </tr>
-    <tr>
-      <th rowspan="2">2</th>
-      <td rowspan="2">BEVFormer-base-GTDepth</td>
-      <td>DFA2D-based</td>
-      <td>-&nbsp/&nbsp-</td>
-      <td>-</td>
-      <td>-</td>
-    </tr>
-    <tr>
-      <td>DFA3D-based</td>
-      <td>57.6&nbsp/&nbsp63.6 <br>+16.0&nbsp/&nbsp+11.9</td>
-      <td><a href="https://github.com/IDEA-Research/3D-deformable-attention/blob/main/BEVFormer_DFA3D/projects/configs/bevformer/bevformer_base_DFA3D_GTDpt.py">config</a></td>
-      <td><a href="https://drive.google.com/file/d/1my_K-s2G0Pt4zqWAV0t6WvznXTvM8G6r/view?usp=share_link">model</a></td>
-    </tr>
-  </tbody>
-</table>
+1. **Compile the DFA3D operator with C++17** (newer PyTorch headers require it) and a CUDA-compatible
+   host compiler:
+   ```sh
+   cd DFA3D
+   sed -i 's/c++14/c++17/g' setup.py
+   TORCH_CUDA_ARCH_LIST=10.0 CC=/usr/bin/gcc-13 CXX=/usr/bin/g++-13 \
+       pip install -e . --no-build-isolation
+   cd .. && python unittest_DFA3D.py     # silent + exit 0 == pass
+   ```
+2. The `--local-rank` / `--local_rank` argument spelling is accepted by `tools/train.py` for
+   `torch>=2` `torch.distributed.launch`.
 
-# :gear: Usage
-We develop our 3D Deformable Attention based on mmcv. We test our method under ```python=3.8.13,pytorch=1.9.1,cuda=11.1```. Other versions might be available as well.
-## Installation
-1. Clone this repo.
-```sh
-git clone https://github.com/IDEA-Research/3D-deformable-attention.git
-cd 3D-deformable-attention/
-```
-2. Install Pytorch and torchvision.
+For the base operator details and the original nuScenes model zoo, see [`README_DFA3D.md`](README_DFA3D.md).
 
-Follow the instructions at https://pytorch.org/get-started/locally/.
-```sh
-# an example:
-conda install -c pytorch pytorch torchvision
-```
+## Data
 
-3. Compile and install 3D-Deformable-Attention.
-```sh
-cd DFA3D
-bash setup.sh 0
-# check if it is installed correctly.
-cd ../
-python unittest_DFA3D.py
-```
-## Run
+Point `BEVFormer_DFA3D/data/nuscenes` at the CARLA GeoBEV dataset (nuScenes DB format, per-vehicle
+`{vehicle}_infos_{train,val}.pkl`). Dense DPT depth images live under `sweeps/DPT-*` next to the
+`sweeps/RGB-*` images and are loaded automatically by the depth pipeline (no separate `depth_gt/`
+download is needed for CARLA).
 
-### Prepare datasets
-Construct the dataset as in [BEVFormer](https://github.com/fundamentalvision/BEVFormer/blob/master/docs/prepare_dataset.md). And download our prepared [depth map](https://drive.google.com/file/d/1C0lYFU1Wu2fVOjC-YcUBThS5rf4ehieR/view?usp=share_link) (obtained by projecting single sweep lidar points on to the multi-view images), and unzip it at 
-```
-./data/nuscenes/depth_gt/
-```
-### Eval our pretrianed models
-Download our provided checkpoints in Model Zoo.
+## Train
+
 ```sh
 cd BEVFormer_DFA3D
-bash tools/dist_test.sh path_to_config  path_to_checkpoint 1
-# an example: 
-bash tools/dist_test.sh ./projects/configs/bevformer/bevformer_base_DFA3D_GTDpt.py ./ckpt/bevformer_base_DFA3D_gtdpt.pth 1
+CUDA_VISIBLE_DEVICES=0 bash tools/train_DFA3D_carla.sh \
+    projects/configs/bevformer/bevformer_DFA3D_carla.py 28533
 ```
-### Train the models
+
+## Eval
+
 ```sh
-bash ./tools/dist_train.sh path_to_config 8
-# an example
-bash ./tools/dist_train.sh ./projects/configs/bevformer/bevformer_base_DFA3D_GTDpt.py 8
+cd BEVFormer_DFA3D
+bash tools/dist_test.sh \
+    projects/configs/bevformer/bevformer_DFA3D_carla.py path_to_checkpoint 1 --eval bbox
 ```
-# :black_nib: Citation
-```
-@inproceedings{
+
+## Citation
+
+If you use this code, please cite the original DFA3D paper and BEVFormer.
+
+```bibtex
+@inproceedings{li2023dfa3d,
   title={DFA3D: 3D Deformable Attention For 2D-to-3D Feature Lifting},
   author={Hongyang Li and Hao Zhang and Zhaoyang Zeng and Shilong Liu and Feng Li and Tianhe Ren and Lei Zhang},
-  booktitle={Proceedings of the IEEE/CVF international conference on computer vision},
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
   year={2023}
+}
+@article{li2022bevformer,
+  title={BEVFormer: Learning Bird's-Eye-View Representation from Multi-Camera Images via Spatiotemporal Transformers},
+  author={Li, Zhiqi and Wang, Wenhai and Li, Hongyang and Xie, Enze and Sima, Chonghao and Lu, Tong and Qiao, Yu and Dai, Jifeng},
+  journal={arXiv preprint arXiv:2203.17270},
+  year={2022}
 }
 ```

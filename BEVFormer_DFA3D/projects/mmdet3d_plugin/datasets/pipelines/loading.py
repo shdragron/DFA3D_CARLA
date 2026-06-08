@@ -22,7 +22,62 @@ import os
 import pdb
 import torch
 import numpy as np
+import mmcv
+from PIL import Image
 from mmdet.datasets.builder import PIPELINES
+
+
+@PIPELINES.register_module()
+class CarlaDPTMultiViewDepthDFA3D(object):
+    """Dense CARLA DPT depth GT for the DFA3D DepthHead.
+
+    Produces ``results['dpt']`` = list of per-camera dense depth maps (meters,
+    float32, one (H, W) array per view at the CURRENT image resolution), exactly
+    parallel to ``results['img']``. It is inserted BEFORE
+    RandomScaleImageMultiViewImageDpt + PadMultiViewImage so the depth map is
+    scaled (nearest) and padded identically to its RGB image, keeping
+    pixel-for-pixel alignment all the way to the DepthHead (which then
+    down-samples by ``downsample_factor`` and quantizes into ``dbound`` bins).
+
+    DPT source (same as BEVDet/BEVDepth's CarlaDPTMultiViewDepth, verified):
+    an RGB-encoded PNG at the original image size storing PLANAR Z-depth
+    (median DPT/z == 0.998 vs LiDAR, so NO range->Z conversion). The path is
+    derived from the RGB path by RGB->DPT, .jpg->.png — which also selects the
+    correct per-vehicle folder (RGB-CAM_FRONT->DPT-CAM_FRONT for sedan,
+    RGB-suv-*->DPT-suv-*, RGB-bus-*->DPT-bus-*). Decode:
+        depth_m = (R + G*256 + B*256^2) / (256^3 - 1) * 1000
+    Sky/far ~ 1000 m falls outside dbound=[2,58] and is auto-masked by the head.
+    """
+
+    def __call__(self, results):
+        img_paths = results['img_filename']
+        imgs = results['img']
+        map_depths = []
+        dpt_paths = []
+        for cid, rgb_path in enumerate(img_paths):
+            dpt_path = rgb_path.replace('RGB', 'DPT').replace('.jpg', '.png')
+            mmcv.check_file_exist(dpt_path)
+            dpt = np.asarray(Image.open(dpt_path).convert('RGB'))
+            r = dpt[..., 0].astype(np.float32)
+            g = dpt[..., 1].astype(np.float32)
+            b = dpt[..., 2].astype(np.float32)
+            depth = (r + g * 256.0 + b * 256.0 ** 2) / (256.0 ** 3 - 1.0) * 1000.0
+            # Align to the loaded image size (should already match; resize with
+            # NEAREST so depth VALUES are preserved if the DPT png size differs).
+            h, w = imgs[cid].shape[:2]
+            if depth.shape[0] != h or depth.shape[1] != w:
+                depth = mmcv.imresize(
+                    depth, (w, h), interpolation='nearest')
+            map_depths.append(depth.astype(np.float32))
+            dpt_paths.append(dpt_path)
+        results['dpt'] = map_depths
+        results['filename_dpt'] = dpt_paths
+        return results
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+
+
 @PIPELINES.register_module()
 class LoadMultiViewDepthFromFiles(object):
     """Load the gound truth depth map generated from BEVDepth using lidar.

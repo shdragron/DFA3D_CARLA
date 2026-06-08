@@ -1,3 +1,14 @@
+# CARLA fork run artifacts (not source)
+BEVFormer_DFA3D/work_dirs/
+BEVFormer_DFA3D/logs/
+BEVFormer_DFA3D/wandb/
+BEVFormer_DFA3D/data/
+**/ckpts/
+*.pth
+*.log
+*.out
+tmp_shard*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
