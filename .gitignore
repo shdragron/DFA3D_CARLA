@@ -173,3 +173,9 @@ cython_debug/
 data
 work_dirs
 *.pth
+# run artifacts (local only)
+BEVFormer_DFA3D/test/
+BEVFormer_DFA3D/bev_det_benchmark/out/
+BEVFormer_DFA3D/logs/
+BEVFormer_DFA3D/wandb/
+BEVFormer_DFA3D/val/

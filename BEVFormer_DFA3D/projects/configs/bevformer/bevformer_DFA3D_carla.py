@@ -102,9 +102,9 @@ model = dict(
                             deformable_attention=dict(
                                 type='MSDeformableAttention3D_DFA3D',
                                 embed_dims=_dim_, num_points=8, num_levels=_num_levels_,
-                                # im2col_step must divide the per-call batch (bs*num_cams).
-                                # Single-GPU global batch 16 -> 16*6=96; 48 | 96 (default 64
-                                # does not). This is a numerically-irrelevant CUDA tiling step.
+                                # im2col_step must divide the per-call batch (samples_per_gpu*num_cams).
+                                # 2-GPU: per-GPU bs8 -> 8*6=48; 48 | 48. (Single-GPU bs16 -> 96; 48 | 96
+                                # too.) Numerically-irrelevant CUDA tiling step; safe for both layouts.
                                 im2col_step=48),
                             embed_dims=_dim_)
                     ],
@@ -174,16 +174,17 @@ test_pipeline = [
         ])
 ]
 
-# FAIR MATCH to the BEVFormer-tiny CARLA baseline: that model trained at global
-# batch 16 (samples_per_gpu=8 x 2 B200) with lr=4e-4. Here we run on a SINGLE GPU,
-# so samples_per_gpu=16 reproduces the same global batch 16 + same lr (below).
-# The backbone BN is frozen (norm_eval=True, requires_grad=False), so 1xbs16 is
-# numerically equivalent to 2xbs8 in batch statistics -> a faithful single-variable
-# (depth-aware lifting) comparison vs BEVFormer-tiny.
+# FAIR MATCH to the BEVFormer-tiny CARLA baseline: that model trained at GLOBAL
+# batch 16 with lr=4e-4 (samples_per_gpu=8 x 2 B200). We run 2-GPU DDP the same way:
+# samples_per_gpu=8 x 2 GPU = global batch 16, lr=4e-4 unchanged. Frozen backbone BN
+# (norm_eval=True, requires_grad=False) means the batch statistics are identical, so
+# this is a faithful single-variable (depth-aware lifting) comparison vs BEVFormer-tiny.
+# IMPORTANT: when changing #GPUs, keep GLOBAL batch (=samples_per_gpu * #GPU) and lr
+# fixed -- do NOT scale lr with GPU count here (global batch is held at 16).
 data = dict(
     # workers kept modest: the dense DPT depth loader adds 6 full-res maps/sample,
     # and we share the box with the running VP jobs -> avoid the SIGKILL OOM burst.
-    samples_per_gpu=16, workers_per_gpu=4,
+    samples_per_gpu=8, workers_per_gpu=4,
     train=dict(type=dataset_type, data_root=data_root,
                ann_file=data_root + f'{vehicle}_infos_train.pkl',
                pipeline=train_pipeline, classes=class_names, modality=input_modality,

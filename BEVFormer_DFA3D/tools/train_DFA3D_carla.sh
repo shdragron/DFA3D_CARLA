@@ -14,14 +14,15 @@ cd "$HERE"
 
 CFG=${1:-projects/configs/bevformer/bevformer_DFA3D_carla.py}
 PORT=${2:-28533}
+GPUS=${3:-1}
 PY=${PY:-/NHNHOME/WORKSPACE/0526040099_A/giyong/miniconda3/envs/bevformer-b200/bin/python}
 NAME=$(basename "$CFG" .py)
 WORKDIR=work_dirs/${NAME}
 mkdir -p logs "$WORKDIR"
 
-echo "[DFA3D] config=$CFG  port=$PORT  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "[DFA3D] config=$CFG  port=$PORT  GPUS=$GPUS  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 PYTHONPATH="$HERE":${PYTHONPATH:-} \
-"$PY" -m torch.distributed.launch --nproc_per_node=1 --master_port="$PORT" \
+"$PY" -m torch.distributed.launch --nproc_per_node="$GPUS" --master_port="$PORT" \
     tools/train.py "$CFG" \
     --launcher pytorch \
     --work-dir "$WORKDIR" \
