@@ -56,6 +56,40 @@ Outputs land in `bev_det_benchmark/out/{vp_<tag>,cts_<tag>}/` with the same
 GT visibility>=2). Copy the merged outputs to `results/DFA3D/{vp,cts}/` in the
 main repo.
 
+## Running on another server
+
+Everything in git EXCEPT checkpoints and data. Checklist:
+
+1. `git clone git@github.com:shdragron/DFA3D_CARLA.git` (needs commit de4d04d+).
+2. Build the CUDA ext: `cd DFA3D && pip install -e .` inside a bevformer-b200-
+   equivalent env (torch 2.x + matching CUDA arch for the local GPU; the ops are
+   `WeightedMultiScaleDeformableAttn`/`DepthScoreSample`). `python -c "from dfa3D
+   import ext_loader"` must pass.
+3. Copy checkpoints (gitignored): `work_dirs/bevformer_DFA3D_carla{,_suv,_bus}/
+   epoch_24.pth` (3 x 480MB; also mirrored at the main repo's
+   `results/DFA3D/ckpts/`). md5: sedan bcfc0523…, suv 8930b9e6…, bus b642f5b9….
+4. Data mounts: `BEVFormer_DFA3D/data/nuscenes -> carla_geobev` symlink
+   (infos pkls + sweeps RGB + v1.0-carla_*_eval DBs; DPT dirs NOT needed for
+   eval), and for VP also `carla_VR/` (re-rendered images +
+   viewpoint_metadata.json).
+5. Edit hardcoded paths for the new host:
+   - `build_condition_pkls.py`: `BEVF_ROOT` (this repo's root) and `VR_ROOT`
+     (carla_VR location).
+   - `run_dfa3d.sh` / `run_vp_dfa3d.sh` / `run_vp_full_dfa3d.sh` /
+     `run_cts_dfa3d.sh`: `DFA3D_ROOT` / `cd` path / conda env name.
+   - `run_vp_full_dfa3d.sh`: drop/adjust `numactl --cpunodebind` if the host has
+     a different NUMA layout.
+6. Verify with the smoke runs (1-2 min each) BEFORE the full runs:
+   - VP: the smoke command above (expect Normal NDS ~0.484 on the 48-frame
+     subset and a `[CARLA-METRICS-JSON]` line per cell).
+   - CTS path: slice one scene from `suv_infos_val.pkl` (all 79 frames of a
+     single scene — partial scenes break the devkit pred==gt assertion) and run
+     `run_dfa3d.sh <sedan cfg> <suv ckpt> 1 <pkl>`; expect a `[CARLA-EVAL]` line.
+7. Full runs: `run_vp_full_dfa3d.sh 6 dfa3d_sedan_full 79` (2 GPUs, ~631 cells,
+   crash-resumable by re-running with the same tag) and `run_cts_dfa3d.sh`
+   (1 GPU, 10 cells). Copy the merged `out/vp_<tag>/eval_vp.*` and
+   `out/cts_<tag>/eval_cts.*` back to the main repo's `results/DFA3D/{vp,cts}/`.
+
 Gotchas inherited from the main drivers (do not "fix" these):
 - VP image swap uses carla_VR frame index `2N` for geobev frame `N` (already
   encoded in `build_condition_pkls.vr_image_path`).
