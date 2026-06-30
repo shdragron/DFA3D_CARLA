@@ -21,6 +21,7 @@ Original code (projects/mmdet3d_plugin/datasets/nuscenes_dataset.py,
 projects/mmdet3d_plugin/datasets/nuscnes_eval.py, and nuscenes-devkit) is
 NOT modified.
 """
+import os
 from os import path as osp
 
 import mmcv
@@ -267,4 +268,67 @@ class CarlaNuScenesDataset(CustomNuScenesDataset):
         # 10-class TP errors, mAP, NDS) without re-running the eval.
         import json as _json
         print('[CARLA-METRICS-JSON] ' + _json.dumps(detail))
+        # Optional second scoring pass at a LOWER visibility floor (post-processing
+        # of the SAME predictions), gated by env so every existing pipeline keeps
+        # the byte-identical vis>=2 behaviour. The CTS no-vis campaign sets
+        # CARLA_DUAL_VIS=1 to also emit the all-boxes (visibility>=0) score, which
+        # a downstream parser scrapes from the [CARLA-EVAL-VIS0] / metrics lines.
+        if os.environ.get('CARLA_DUAL_VIS'):
+            try:
+                self._score_pass_extra_vis(
+                    result_path, output_dir, eval_split,
+                    carla_val_scene_names, result_name, vis_floor=0)
+            except Exception as _e:                       # never break the vis2 result
+                print(f'[CARLA-EVAL-VIS0] FAILED: {_e}')
+        return detail
+    def _score_pass_extra_vis(self, result_path, output_dir, eval_split,
+                              carla_val_scene_names, result_name, vis_floor):
+        """Re-score the already-saved predictions (result_path) at a different
+        visibility floor and print [CARLA-EVAL-VIS{floor}] / [CARLA-METRICS-JSON-VIS{floor}].
+        Predictions are visibility-independent, so this is pure post-processing:
+        only the GT filter (CARLA_MIN_VISIBILITY) changes between passes."""
+        import os as _os, json as _json
+        import numpy as np
+        global CARLA_MIN_VISIBILITY
+        _prev = CARLA_MIN_VISIBILITY
+        CARLA_MIN_VISIBILITY = vis_floor
+        restore = _patch_nuscenes_eval_for_carla(carla_val_scene_names)
+        try:
+            nusc_eval = NuScenesEval_custom(
+                self.nusc, config=self.eval_detection_configs,
+                result_path=result_path, eval_set=eval_split,
+                output_dir=output_dir, verbose=False,
+                overlap_test=self.overlap_test, data_infos=self.data_infos)
+            nusc_eval.main(plot_examples=0, render_curves=False)
+        finally:
+            restore()
+            CARLA_MIN_VISIBILITY = _prev
+        metrics = mmcv.load(osp.join(output_dir, 'metrics_summary.json'))
+        metric_prefix = f'{result_name}_NuScenes'
+        detail = dict()
+        for name in self.CLASSES:
+            for k, v in metrics['label_aps'][name].items():
+                detail['{}/{}_AP_dist_{}'.format(metric_prefix, name, k)] = float('{:.4f}'.format(v))
+            for k, v in metrics['label_tp_errors'][name].items():
+                detail['{}/{}_{}'.format(metric_prefix, name, k)] = float('{:.4f}'.format(v))
+            for k, v in metrics['tp_errors'].items():
+                detail['{}/{}'.format(metric_prefix, self.ErrNameMapping[k])] = float('{:.4f}'.format(v))
+        tp_keys = list(metrics['tp_errors'].keys())
+        mean_dist_aps = [np.mean(list(metrics['label_aps'][c].values())) for c in self.CLASSES]
+        mAP6 = float(np.mean(mean_dist_aps))
+        tp_errs6 = {m: float(np.nanmean(
+            [metrics['label_tp_errors'][c][m] for c in self.CLASSES])) for m in tp_keys}
+        tp_scores = [max(0.0, 1.0 - tp_errs6[m]) for m in tp_keys]
+        nds6 = (5.0 * mAP6 + float(np.sum(tp_scores))) / (5.0 + len(tp_keys))
+        detail['{}/NDS'.format(metric_prefix)] = nds6
+        detail['{}/mAP'.format(metric_prefix)] = mAP6
+        for m in tp_keys:
+            detail['{}/{}_6class'.format(metric_prefix, self.ErrNameMapping[m])] = round(tp_errs6[m], 4)
+        detail['{}/NDS_10class'.format(metric_prefix)] = metrics['nd_score']
+        detail['{}/mAP_10class'.format(metric_prefix)] = metrics['mean_ap']
+        tag = f'VIS{vis_floor}'
+        print(f'[CARLA-EVAL-{tag}] visibility_floor={vis_floor}  '
+              f'{len(self.CLASSES)}-class mAP={mAP6:.4f} NDS={nds6:.4f} | '
+              f'10-class mAP={metrics["mean_ap"]:.4f} NDS={metrics["nd_score"]:.4f}')
+        print(f'[CARLA-METRICS-JSON-{tag}] ' + _json.dumps(detail))
         return detail

@@ -140,14 +140,19 @@ def main():
     ap.add_argument('--config', default='projects/configs/bevformer/bevformer_DFA3D_carla.py')
     ap.add_argument('--ckpt', default='work_dirs/bevformer_DFA3D_carla/epoch_24.pth',
                     help='SOURCE (sedan) model = the numerator (transferred model)')
+    ap.add_argument('--source', default='sedan', choices=['sedan', 'suv', 'bus'],
+                    help='SOURCE (base/training) platform. sedan keeps the original '
+                         'behaviour byte-identical; suv/bus enable the full transfer matrix.')
     ap.add_argument('--target-ckpt-tmpl',
                     default='work_dirs/bevformer_DFA3D_carla_{}/epoch_24.pth',
                     help='TARGET model = the denominator (native upper bound); '
                          '{} filled with suv/bus')
     ap.add_argument('--ngpu', type=int, default=1)
     ap.add_argument('--tag', default='dfa3d_sedan', help='output subdir name')
-    ap.add_argument('--targets', nargs='+', default=['suv', 'bus'],
-                    choices=['suv', 'bus'])
+    ap.add_argument('--targets', nargs='+', default=None,
+                    choices=['sedan', 'suv', 'bus'],
+                    help='deploy/target platforms (denominator = each target oracle). '
+                         'default = the two platforms other than --source.')
     ap.add_argument('--conditions', nargs='+', default=['NORMAL', 'EXT', 'IMG', 'CAL'],
                     choices=CTS_COND_NAMES)
     ap.add_argument('--framework', default='bevformer',
@@ -162,6 +167,10 @@ def main():
                          'the BEVDepth root; it sets the eval DB version')
     ap.add_argument('--outdir', default=os.path.join(HERE, 'out'))
     args = ap.parse_args()
+    if args.targets is None:
+        args.targets = [p for p in ['sedan', 'suv', 'bus'] if p != args.source]
+    args.targets = [t for t in args.targets if t != args.source]
+    assert args.targets, 'no targets left (all equal --source?)'
 
     config = os.path.join(BEVF_ROOT, args.config) if not os.path.isabs(args.config) else args.config
     ckpt = os.path.join(BEVF_ROOT, args.ckpt) if not os.path.isabs(args.ckpt) else args.ckpt
@@ -210,6 +219,9 @@ def main():
 
         def target_val_pkl(_t):
             return os.path.join(B.DATA_ROOT, f'{_t}_infos_val.pkl')
+
+    source_pkl = target_val_pkl(args.source)
+    src_kw = {} if args.source == 'sedan' else {'sedan_pkl': source_pkl}
 
     outdir = os.path.join(args.outdir, f'cts_{args.tag}')
     pkldir = os.path.join(outdir, 'pkls')
@@ -276,7 +288,7 @@ def main():
                       f'CTS={row["cts"]:.4f} (/{p_target:.4f})', flush=True)
                 continue
             pkl = os.path.join(pkldir, f'{target}_{cond}_infos_val.pkl')
-            n, mt, ms = B.make_cts_pkl(cond, target=target, out_path=pkl)
+            n, mt, ms = B.make_cts_pkl(cond, target=target, out_path=pkl, **src_kw)
             res = run_one(run_sh, exp, ckpt, args.ngpu, pkl,
                           os.path.join(logdir, f'{target}_{cond}.log'))
             cts = res['nds'] / p_target if p_target else float('nan')
